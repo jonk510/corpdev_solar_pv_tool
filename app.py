@@ -54,35 +54,35 @@ html, body, [class*="css"] {
     font-family: "Helvetica Neue", Helvetica, Arial, sans-serif !important;
     -webkit-font-smoothing: antialiased;
 }
-section[data-testid="stSidebar"] { background:#F8FAFC; border-right:1px solid #E2E8F0; }
+section[data-testid="stSidebar"] { background:#0F2040; border-right:1px solid #1E3A5F; }
 section[data-testid="stSidebar"] .stButton>button {
-    background:#1B3A6B; color:#FFF; border-radius:6px; font-weight:600;
+    background:#3B82F6; color:#FFF; border-radius:6px; font-weight:600;
     width:100%; padding:0.6rem 1rem; border:none;
 }
-section[data-testid="stSidebar"] .stButton>button:hover { background:#254e94; }
+section[data-testid="stSidebar"] .stButton>button:hover { background:#2563EB; }
 .kpi-card {
-    background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px;
+    background:#0F2040; border:1px solid #1E3A5F; border-radius:8px;
     padding:1rem 0.8rem; text-align:center;
 }
-.kpi-card .val  { font-size:1.55rem; font-weight:700; color:#1B3A6B; line-height:1.1; }
-.kpi-card .unit { font-size:0.72rem; color:#64748B; margin-top:0.1rem; }
-.kpi-card .lbl  { font-size:0.78rem; color:#475569; margin-top:0.2rem; }
+.kpi-card .val  { font-size:1.55rem; font-weight:700; color:#60A5FA; line-height:1.1; }
+.kpi-card .unit { font-size:0.72rem; color:#94A3B8; margin-top:0.1rem; }
+.kpi-card .lbl  { font-size:0.78rem; color:#CBD5E1; margin-top:0.2rem; }
 .stDownloadButton>button {
-    background:#0F766E; color:#FFF; border-radius:6px;
+    background:#0891B2; color:#FFF; border-radius:6px;
     font-weight:600; width:100%; border:none;
 }
-.stDownloadButton>button:hover { background:#0d6460; }
+.stDownloadButton>button:hover { background:#0E7490; }
 </style>
 """, unsafe_allow_html=True)
 
 # ── header ────────────────────────────────────────────────────────────────────
 st.markdown("""
-<div style="background:linear-gradient(135deg,#1B3A6B 0%,#254e94 100%);
-            border-radius:10px; padding:1.2rem 1.8rem; margin-bottom:1.2rem;">
-  <h1 style="font-size:1.7rem; font-weight:700; color:#FFF; margin:0;
+<div style="background:linear-gradient(135deg,#0A1628 0%,#0F2040 60%,#1E3A5F 100%);
+            border:1px solid #1E3A5F; border-radius:10px; padding:1.2rem 1.8rem; margin-bottom:1.2rem;">
+  <h1 style="font-size:1.7rem; font-weight:700; color:#E2E8F0; margin:0;
              letter-spacing:-0.03em; line-height:1.2;">
     Solar PV Time Series &amp; Energy Analysis<br>
-    <span style="font-size:1.05rem; font-weight:400; color:#BFD3F5;">
+    <span style="font-size:1.05rem; font-weight:400; color:#93C5FD;">
       NASA POWER (CERES/SRB) &middot; pvlib &middot; Single Site &amp; Batch
     </span>
   </h1>
@@ -453,10 +453,13 @@ def run_solar_pipeline(
 
 
 # ── chart helpers ─────────────────────────────────────────────────────────────
-_NAVY  = "#1B3A6B"
-_TEAL  = "#0F766E"
-_AMBER = "#D97706"
-_SLATE = "#64748B"
+_NAVY  = "#3B82F6"
+_TEAL  = "#06B6D4"
+_AMBER = "#FBBF24"
+_SLATE = "#94A3B8"
+_BG    = "rgba(0,0,0,0)"
+_GRID  = "rgba(255,255,255,0.07)"
+_FONT  = "#94A3B8"
 
 
 def _chart_monthly_energy(result_df: pd.DataFrame, tz: str, interval_h: float) -> go.Figure:
@@ -473,9 +476,10 @@ def _chart_monthly_energy(result_df: pd.DataFrame, tz: str, interval_h: float) -
     ))
     fig.update_layout(title="Average Monthly AC Energy Output", yaxis_title="MWh", height=310,
                       margin=dict(l=50,r=20,t=40,b=40),
-                      plot_bgcolor="white", paper_bgcolor="white")
-    fig.update_yaxes(gridcolor="#E2E8F0", zeroline=False)
-    fig.update_xaxes(gridcolor="rgba(0,0,0,0)")
+                      plot_bgcolor=_BG, paper_bgcolor=_BG,
+                      font=dict(color=_FONT))
+    fig.update_yaxes(gridcolor=_GRID, zeroline=False)
+    fig.update_xaxes(gridcolor=_BG)
     return fig
 
 
@@ -500,11 +504,12 @@ def _chart_daily_profile(result_df: pd.DataFrame, tz: str) -> go.Figure:
         xaxis=dict(title="Hour (local time)", dtick=2, range=[0, 24]),
         yaxis_title="kW", height=310,
         margin=dict(l=50,r=20,t=40,b=40),
-        plot_bgcolor="white", paper_bgcolor="white",
+        plot_bgcolor=_BG, paper_bgcolor=_BG,
+        font=dict(color=_FONT),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
-    fig.update_yaxes(gridcolor="#E2E8F0", zeroline=True, zerolinecolor="#CBD5E1")
-    fig.update_xaxes(gridcolor="#E2E8F0")
+    fig.update_yaxes(gridcolor=_GRID, zeroline=True, zerolinecolor="rgba(255,255,255,0.15)")
+    fig.update_xaxes(gridcolor=_GRID)
     return fig
 
 
@@ -513,7 +518,7 @@ def _chart_irradiance(result_df: pd.DataFrame) -> go.Figure:
     grp = result_df.groupby(result_df.index.month)
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=months, y=grp["ghi_clear_wm2"].mean().round(1).values,
-                             name="Clear-sky GHI", line=dict(color="#CBD5E1", width=1.5, dash="dot")))
+                             name="Clear-sky GHI", line=dict(color="#475569", width=1.5, dash="dot")))
     fig.add_trace(go.Scatter(x=months, y=grp["ghi_wm2"].mean().round(1).values,
                              name="GHI (all-sky)", line=dict(color=_SLATE, width=2)))
     fig.add_trace(go.Scatter(x=months, y=grp["poa_wm2"].mean().round(1).values,
@@ -521,10 +526,11 @@ def _chart_irradiance(result_df: pd.DataFrame) -> go.Figure:
     fig.update_layout(title="Monthly Mean Irradiance — Clear-sky / GHI / POA",
                       yaxis_title="W/m2", height=310,
                       margin=dict(l=50,r=20,t=40,b=40),
-                      plot_bgcolor="white", paper_bgcolor="white",
+                      plot_bgcolor=_BG, paper_bgcolor=_BG,
+                      font=dict(color=_FONT),
                       legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-    fig.update_yaxes(gridcolor="#E2E8F0", zeroline=False)
-    fig.update_xaxes(gridcolor="rgba(0,0,0,0)")
+    fig.update_yaxes(gridcolor=_GRID, zeroline=False)
+    fig.update_xaxes(gridcolor=_BG)
     return fig
 
 
@@ -547,10 +553,11 @@ def _chart_cloud_shading(result_df: pd.DataFrame) -> go.Figure:
     fig.update_layout(title="Monthly Average Cloud Shading (% of Clear-Sky GHI Lost)",
                       yaxis_title="Cloud Shading (%)", height=310,
                       margin=dict(l=50,r=20,t=40,b=40),
-                      plot_bgcolor="white", paper_bgcolor="white",
+                      plot_bgcolor=_BG, paper_bgcolor=_BG,
+                      font=dict(color=_FONT),
                       yaxis_range=[0, y_max * 1.25])
-    fig.update_yaxes(gridcolor="#E2E8F0", zeroline=False)
-    fig.update_xaxes(gridcolor="rgba(0,0,0,0)")
+    fig.update_yaxes(gridcolor=_GRID, zeroline=False)
+    fig.update_xaxes(gridcolor=_BG)
     return fig
 
 
@@ -564,10 +571,11 @@ def _chart_annual_cf(result_df: pd.DataFrame, inverter_kw: float, interval_h: fl
     fig.update_layout(title="Annual AC Capacity Factor by Year",
                       yaxis_title="Capacity Factor (%)", height=280,
                       margin=dict(l=50,r=20,t=40,b=40),
-                      plot_bgcolor="white", paper_bgcolor="white",
+                      plot_bgcolor=_BG, paper_bgcolor=_BG,
+                      font=dict(color=_FONT),
                       yaxis_range=[0, max(cf.values) * 1.25])
-    fig.update_yaxes(gridcolor="#E2E8F0", zeroline=False)
-    fig.update_xaxes(gridcolor="rgba(0,0,0,0)")
+    fig.update_yaxes(gridcolor=_GRID, zeroline=False)
+    fig.update_xaxes(gridcolor=_BG)
     return fig
 
 
