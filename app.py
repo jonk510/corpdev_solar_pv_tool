@@ -84,6 +84,22 @@ def _get_tz(lat: float, lon: float) -> str:
     return TimezoneFinder().timezone_at(lat=lat, lng=lon) or "UTC"
 
 
+@st.cache_data(show_spinner=False)
+def _get_elevation(lat: float, lon: float) -> int:
+    """Auto-fetch elevation (m ASL) from Open-Topo-Data SRTM 30m dataset."""
+    try:
+        r = requests.get(
+            "https://api.opentopodata.org/v1/srtm30m",
+            params={"locations": f"{lat},{lon}"},
+            timeout=10,
+        )
+        r.raise_for_status()
+        elev = r.json()["results"][0]["elevation"]
+        return int(round(elev)) if elev is not None else 0
+    except Exception:
+        return 0
+
+
 def _fetch_nasa_year(lat: float, lon: float, year: int) -> pd.DataFrame:
     """Fetch one year of hourly data from NASA POWER (no time-standard param for hourly)."""
     resp = requests.get(NASA_URL, params={
@@ -331,7 +347,13 @@ with st.sidebar:
     st.markdown("### 📍 Location")
     lat = st.number_input("Latitude",  value=-31.9505, min_value=-90.0,  max_value=90.0,  step=0.001, format="%.4f")
     lon = st.number_input("Longitude", value=115.8605, min_value=-180.0, max_value=180.0, step=0.001, format="%.4f")
-    elevation = st.number_input("Elevation (m ASL)", value=0, min_value=0, max_value=5000, step=1)
+    elev_auto = _get_elevation(lat, lon)
+    elevation = st.number_input(
+        "Elevation (m ASL)", value=elev_auto,
+        min_value=0, max_value=9000, step=1,
+        key=f"elev_{lat:.4f}_{lon:.4f}",
+        help="Auto-fetched from SRTM 30m data. Override if needed.",
+    )
 
     st.markdown("---")
     st.markdown("### 📅 Date Range")
