@@ -191,8 +191,13 @@ def disaggregate_30min(df: pd.DataFrame, location: pvlib.location.Location, tz: 
     # Interpolate Kt to 30-min
     kt_30 = kt_h.reindex(kt_h.index.union(idx_30)).interpolate("linear").reindex(idx_30).fillna(0)
 
-    # Reconstruct GHI
-    ghi_30 = (kt_30.values * ghi_cs_30.values).clip(0)
+    # Reconstruct GHI at :30 marks via Kt × Ineichen clear-sky
+    ghi_30_s = pd.Series((kt_30.values * ghi_cs_30.values).clip(0), index=idx_30)
+    # Anchor :00 marks to original NASA POWER values to preserve energy conservation
+    # (avoids systematic bias from CERES vs Ineichen clear-sky model mismatch)
+    hourly_in_30 = df.index.intersection(idx_30)
+    ghi_30_s[hourly_in_30] = df.loc[hourly_in_30, "ghi"].values
+    ghi_30 = ghi_30_s.values
 
     # Decompose GHI → DNI + DHI via Erbs
     solpos_30 = location.get_solarposition(times_30_local)
@@ -294,7 +299,7 @@ def run_solar_pipeline(
     ann_ac   = ac_power.sum()   * interval_h           / n_years   # kWh/yr
     sy       = ann_ac / capacity_kwp
     cf       = ann_ac / (inverter_kw * 8760.0)
-    pr       = ann_ac / (ann_ghi * capacity_kwp)
+    pr       = ann_ac / (ann_poa * capacity_kwp)   # IEC 61724-1: PR referenced to POA, not GHI
     mean_cloud = (1.0 - float(np.nanmean(cloud_t))) * 100
 
     meta = {
@@ -391,16 +396,24 @@ def _chart_irradiance(result_df: pd.DataFrame) -> go.Figure:
 def _chart_cloud_shading(result_df: pd.DataFrame) -> go.Figure:
     months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
     day = result_df[result_df["ghi_clear_wm2"] > 5]
-    shading_m = day.groupby(day.index.month)["cloud_shading_pct"].mean().round(1)
+    if len(day) == 0:
+        return go.Figure().update_layout(title="Cloud Shading (no daytime data)", height=310)
+    # reindex to 1-12 so month labels always align correctly even if some months have no data
+    shading_m = (day.groupby(day.index.month)["cloud_shading_pct"]
+                    .mean()
+                    .reindex(range(1, 13))
+                    .round(1))
+    y_max = float(np.nanmax(shading_m.values)) if not np.all(np.isnan(shading_m.values)) else 50
     fig = go.Figure(go.Bar(
         x=months, y=shading_m.values, marker_color=_SLATE,
-        text=[f"{v:.0f}%" for v in shading_m.values], textposition="outside",
+        text=[f"{v:.0f}%" if not np.isnan(v) else "" for v in shading_m.values],
+        textposition="outside",
     ))
     fig.update_layout(title="Monthly Average Cloud Shading (% of Clear-Sky GHI Lost)",
                       yaxis_title="Cloud Shading (%)", height=310,
                       margin=dict(l=50,r=20,t=40,b=40),
                       plot_bgcolor="white", paper_bgcolor="white",
-                      yaxis_range=[0, max(shading_m.values) * 1.25])
+                      yaxis_range=[0, y_max * 1.25])
     fig.update_yaxes(gridcolor="#E2E8F0", zeroline=False)
     fig.update_xaxes(gridcolor="rgba(0,0,0,0)")
     return fig
@@ -599,11 +612,15 @@ if app_mode == "Single Site":
                 st.stop()
         label = "30-min" if "30" in resolution else "hourly"
         with st.spinner(f"Running pvlib pipeline ({len(df_raw):,} hourly records -> {label})..."):
-            result_df, meta = run_solar_pipeline(
-                df_raw, lat, lon, elevation, tz,
-                tilt, azimuth, capacity_kwp, dc_ac_ratio, temp_coeff, system_losses,
-                resolution="30-min" if "30" in resolution else "Hourly",
-            )
+            try:
+                result_df, meta = run_solar_pipeline(
+                    df_raw, lat, lon, elevation, tz,
+                    tilt, azimuth, capacity_kwp, dc_ac_ratio, temp_coeff, system_losses,
+                    resolution="30-min" if "30" in resolution else "Hourly",
+                )
+            except Exception as e:
+                st.error(f"Pipeline failed: {e}")
+                st.stop()
         st.session_state.update({
             "solar_result": result_df,
             "solar_meta":   meta,
@@ -639,7 +656,7 @@ else:
 | `longitude` | Yes | — | Decimal degrees |
 | `capacity_kwp` | Yes | — | DC array capacity (kWp) |
 | `tilt_deg` | No | `round(abs(lat))` | Panel tilt from horizontal |
-| `azimuth_deg` | No | `0` | Degrees from North (0=N, 180=S) |
+| `azimuth_deg` | No | `0` | Degrees from North (0=N optimal S. hemisphere, 180=S optimal N. hemisphere) |
 | `dc_ac_ratio` | No | `1.15` | DC capacity / inverter rating |
 | `temp_coeff_pct_c` | No | `-0.40` | Power loss per degC above 25 |
 | `system_losses_pct` | No | `8` | Soiling, wiring, availability etc. |
