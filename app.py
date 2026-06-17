@@ -83,28 +83,37 @@ def _get_tz(lat: float, lon: float) -> str:
     return TimezoneFinder().timezone_at(lat=lat, lng=lon) or "UTC"
 
 
-@st.cache_data(show_spinner=False)
-def fetch_nasa_power(lat: float, lon: float, start_year: int, end_year: int) -> pd.DataFrame:
-    """Fetch hourly GHI/DNI/DHI/T2M/WS2M from NASA POWER; returns UTC DataFrame."""
+def _fetch_nasa_year(lat: float, lon: float, year: int) -> pd.DataFrame:
+    """Fetch one year of hourly data from NASA POWER (no time-standard param for hourly)."""
     resp = requests.get(NASA_URL, params={
-        "parameters":    NASA_PARAMS,
-        "community":     "RE",
-        "longitude":     lon,
-        "latitude":      lat,
-        "start":         f"{start_year}0101",
-        "end":           f"{end_year}1231",
-        "format":        "JSON",
-        "time-standard": "UTC",
-    }, timeout=300)
-    resp.raise_for_status()
-
+        "parameters": NASA_PARAMS,
+        "community":  "RE",
+        "longitude":  lon,
+        "latitude":   lat,
+        "start":      f"{year}0101",
+        "end":        f"{year}1231",
+        "format":     "JSON",
+    }, timeout=120)
+    if not resp.ok:
+        raise RuntimeError(
+            f"NASA POWER API error {resp.status_code} for year {year}: {resp.text[:300]}"
+        )
     param_data = resp.json()["properties"]["parameter"]
     first_key  = next(iter(param_data))
     timestamps = list(param_data[first_key].keys())
-
     df = pd.DataFrame(param_data, index=timestamps)
     df.index = pd.to_datetime(df.index, format="%Y%m%dT%H%M")
     df.index = df.index.tz_localize("UTC")
+    return df
+
+
+@st.cache_data(show_spinner=False)
+def fetch_nasa_power(lat: float, lon: float, start_year: int, end_year: int) -> pd.DataFrame:
+    """Fetch hourly GHI/DNI/DHI/T2M/WS2M from NASA POWER; returns UTC DataFrame."""
+    frames = []
+    for yr in range(start_year, end_year + 1):
+        frames.append(_fetch_nasa_year(lat, lon, yr))
+    df = pd.concat(frames).sort_index()
 
     df.rename(columns={
         "ALLSKY_SFC_SW_DWN":  "ghi",
@@ -118,7 +127,6 @@ def fetch_nasa_power(lat: float, lon: float, start_year: int, end_year: int) -> 
     df.replace(-999.0, np.nan, inplace=True)
     df = df.astype(float)
 
-    # Clip irradiance to non-negative; forward-fill met data gaps
     for c in ["ghi", "dni", "dhi"]:
         df[c] = df[c].clip(lower=0)
     for c in ["temp_air", "wind_speed"]:
@@ -408,7 +416,8 @@ st.markdown("---")
 if run_btn:
     tz = _get_tz(lat, lon)
 
-    with st.spinner(f"Fetching NASA POWER hourly data ({start_year}–{end_year})…"):
+    n_years_req = end_year - start_year + 1
+    with st.spinner(f"Fetching NASA POWER hourly data ({start_year}–{end_year}, {n_years_req} API calls)…"):
         try:
             df_raw = fetch_nasa_power(lat, lon, start_year, end_year)
         except Exception as e:
