@@ -102,7 +102,7 @@ def _fetch_nasa_year(lat: float, lon: float, year: int) -> pd.DataFrame:
     first_key  = next(iter(param_data))
     timestamps = list(param_data[first_key].keys())
     df = pd.DataFrame(param_data, index=timestamps)
-    df.index = pd.to_datetime(df.index, format="%Y%m%dT%H%M")
+    df.index = pd.to_datetime(df.index, format="%Y%m%d%H")
     df.index = df.index.tz_localize("UTC")
     return df
 
