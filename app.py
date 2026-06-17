@@ -596,7 +596,9 @@ if app_mode == "Single Site":
         tz_auto = _get_tz(lat, lon)
         st.markdown(f"""
 **Site**  Lat/Lon: `{lat:.4f} / {lon:.4f}`  Elev: `{elevation} m`  TZ: `{tz_auto}`
+
 **System**  `{capacity_kwp:,.0f} kWp`  Tilt: `{tilt}deg`  Az: `{azimuth}deg`  DC:AC: `{dc_ac_ratio:.2f}`
+
 **Data**  NASA POWER  `{start_year}-{end_year}`  Resolution: `{resolution}`
         """)
     st.markdown("---")
