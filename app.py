@@ -4,6 +4,7 @@ Data: NASA POWER (CERES/SRB) · Calculations: pvlib
 """
 
 import io
+import datetime
 import warnings
 import requests
 import numpy as np
@@ -103,7 +104,11 @@ def _fetch_nasa_year(lat: float, lon: float, year: int) -> pd.DataFrame:
     timestamps = list(param_data[first_key].keys())
     df = pd.DataFrame(param_data, index=timestamps)
     df.index = pd.to_datetime(df.index, format="%Y%m%d%H")
-    df.index = df.index.tz_localize("UTC")
+    # NASA POWER hourly data is in Local Solar Time (LST), not UTC.
+    # Localize with a fixed UTC offset = round(lon/15) hours so that pvlib
+    # and all downstream timezone conversions see the correct absolute time.
+    lst_tz = datetime.timezone(datetime.timedelta(hours=round(lon / 15.0)))
+    df.index = df.index.tz_localize(lst_tz)
     return df
 
 
