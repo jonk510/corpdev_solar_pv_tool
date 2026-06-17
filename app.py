@@ -33,7 +33,7 @@ _MIN_YEAR = 1990
 _MAX_YEAR = 2023
 
 NASA_URL    = "https://power.larc.nasa.gov/api/temporal/hourly/point"
-NASA_PARAMS = "ALLSKY_SFC_SW_DWN,ALLSKY_SFC_SW_DNI,ALLSKY_SFC_SW_DIFF,T2M,WS2M"
+NASA_PARAMS = "ALLSKY_SFC_SW_DWN,ALLSKY_SFC_SW_DNI,ALLSKY_SFC_SW_DIFF,CLRSKY_SFC_SW_DWN,T2M,WS2M"
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -140,6 +140,7 @@ def fetch_nasa_power(lat: float, lon: float, start_year: int, end_year: int) -> 
         "ALLSKY_SFC_SW_DWN":  "ghi",
         "ALLSKY_SFC_SW_DNI":  "dni",
         "ALLSKY_SFC_SW_DIFF": "dhi",
+        "CLRSKY_SFC_SW_DWN":  "ghi_clear",
         "T2M":   "temp_air",
         "WS2M":  "wind_speed",
     }, inplace=True)
@@ -148,7 +149,7 @@ def fetch_nasa_power(lat: float, lon: float, start_year: int, end_year: int) -> 
     df.replace(-999.0, np.nan, inplace=True)
     df = df.astype(float)
 
-    for c in ["ghi", "dni", "dhi"]:
+    for c in ["ghi", "dni", "dhi", "ghi_clear"]:
         df[c] = df[c].clip(lower=0)
     for c in ["temp_air", "wind_speed"]:
         df[c] = df[c].ffill().fillna(15.0 if c == "temp_air" else 1.0)
@@ -211,35 +212,47 @@ def run_solar_pipeline(
     # System losses (soiling, wiring, mismatch, availability…)
     ac_power = (ac_power * (1.0 - system_losses_pct / 100.0)).clip(lower=0)
 
+    # Cloud shading: fraction of clear-sky GHI lost to cloud cover
+    # Only meaningful during daylight (clear-sky GHI > 5 W/m²)
+    ghi_clear = df["ghi_clear"]
+    cloud_transmittance = np.where(ghi_clear > 5, df["ghi"] / ghi_clear, np.nan)
+    cloud_transmittance = np.clip(cloud_transmittance, 0.0, 1.0)
+    cloud_shading_pct   = pd.Series((1.0 - cloud_transmittance) * 100, index=df.index)
+
     result = pd.DataFrame({
-        "ghi_wm2":       df["ghi"].round(1),
-        "dni_wm2":       df["dni"].round(1),
-        "dhi_wm2":       df["dhi"].round(1),
-        "poa_wm2":       poa.round(1),
-        "temp_air_c":    df["temp_air"].round(2),
-        "temp_cell_c":   temp_cell.round(2),
-        "wind_speed_ms": df["wind_speed"].round(2),
-        "dc_power_kw":   dc_power.round(4),
-        "ac_power_kw":   ac_power.round(4),
+        "ghi_wm2":          df["ghi"].round(1),
+        "ghi_clear_wm2":    ghi_clear.round(1),
+        "cloud_shading_pct": cloud_shading_pct.round(1),
+        "dni_wm2":          df["dni"].round(1),
+        "dhi_wm2":          df["dhi"].round(1),
+        "poa_wm2":          poa.round(1),
+        "temp_air_c":       df["temp_air"].round(2),
+        "temp_cell_c":      temp_cell.round(2),
+        "wind_speed_ms":    df["wind_speed"].round(2),
+        "dc_power_kw":      dc_power.round(4),
+        "ac_power_kw":      ac_power.round(4),
     }, index=df.index)
 
     n_years = (df.index[-1] - df.index[0]).days / 365.25
-    ann_ghi = df["ghi"].sum() / 1000.0 / n_years
-    ann_poa = poa.sum() / 1000.0 / n_years
-    ann_ac  = ac_power.sum() / n_years
-    sy      = ann_ac / capacity_kwp
-    cf      = ann_ac / (inverter_kw * 8760.0)
-    pr      = ann_ac / (ann_ghi * capacity_kwp)
+    ann_ghi  = df["ghi"].sum() / 1000.0 / n_years
+    ann_poa  = poa.sum() / 1000.0 / n_years
+    ann_ac   = ac_power.sum() / n_years
+    sy       = ann_ac / capacity_kwp
+    cf       = ann_ac / (inverter_kw * 8760.0)
+    pr       = ann_ac / (ann_ghi * capacity_kwp)
+    mean_cloud_shading = float(np.nanmean(cloud_transmittance))
+    mean_cloud_shading = (1.0 - mean_cloud_shading) * 100   # % of clear-sky lost
 
     meta = {
         "n_years": n_years,
-        "annual_ghi_kwh_m2": ann_ghi,
-        "annual_poa_kwh_m2": ann_poa,
-        "annual_ac_kwh":     ann_ac,
-        "specific_yield":    sy,
-        "capacity_factor":   cf,
-        "performance_ratio": pr,
-        "inverter_kw":       inverter_kw,
+        "annual_ghi_kwh_m2":   ann_ghi,
+        "annual_poa_kwh_m2":   ann_poa,
+        "annual_ac_kwh":       ann_ac,
+        "specific_yield":      sy,
+        "capacity_factor":     cf,
+        "performance_ratio":   pr,
+        "inverter_kw":         inverter_kw,
+        "mean_cloud_shading_pct": mean_cloud_shading,
     }
     return result, meta
 
@@ -302,20 +315,48 @@ def _chart_daily_profile(result_df: pd.DataFrame, tz: str) -> go.Figure:
 
 
 def _chart_irradiance(result_df: pd.DataFrame) -> go.Figure:
-    ghi_m = result_df.groupby(result_df.index.month)["ghi_wm2"].mean().round(1)
-    poa_m = result_df.groupby(result_df.index.month)["poa_wm2"].mean().round(1)
     months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+    grp = result_df.groupby(result_df.index.month)
+    ghi_m      = grp["ghi_wm2"].mean().round(1)
+    ghi_clr_m  = grp["ghi_clear_wm2"].mean().round(1)
+    poa_m      = grp["poa_wm2"].mean().round(1)
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=months, y=ghi_m.values, name="GHI (horizontal)",
-                             line=dict(color=_SLATE, width=2, dash="dot")))
-    fig.add_trace(go.Scatter(x=months, y=poa_m.values, name="POA (tilted plane)",
+    fig.add_trace(go.Scatter(x=months, y=ghi_clr_m.values, name="Clear-sky GHI",
+                             line=dict(color="#CBD5E1", width=1.5, dash="dot")))
+    fig.add_trace(go.Scatter(x=months, y=ghi_m.values, name="GHI (all-sky)",
+                             line=dict(color=_SLATE, width=2)))
+    fig.add_trace(go.Scatter(x=months, y=poa_m.values, name="POA (tilted)",
                              line=dict(color=_AMBER, width=2)))
     fig.update_layout(
-        title="Monthly Mean Irradiance — GHI vs Plane-of-Array (POA)",
-        yaxis_title="W/m²", height=300,
+        title="Monthly Mean Irradiance — Clear-sky / GHI / POA",
+        yaxis_title="W/m²", height=310,
         margin=dict(l=50,r=20,t=40,b=40),
         plot_bgcolor="white", paper_bgcolor="white",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+    fig.update_yaxes(gridcolor="#E2E8F0", zeroline=False)
+    fig.update_xaxes(gridcolor="rgba(0,0,0,0)")
+    return fig
+
+
+def _chart_cloud_shading(result_df: pd.DataFrame) -> go.Figure:
+    """Monthly average daytime cloud shading (% of clear-sky GHI lost)."""
+    months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+    # Only use daytime rows (clear-sky GHI > 5 W/m²)
+    day = result_df[result_df["ghi_clear_wm2"] > 5]
+    shading_m = day.groupby(day.index.month)["cloud_shading_pct"].mean().round(1)
+    fig = go.Figure(go.Bar(
+        x=months, y=shading_m.values,
+        marker_color=_SLATE,
+        text=[f"{v:.0f}%" for v in shading_m.values],
+        textposition="outside",
+    ))
+    fig.update_layout(
+        title="Monthly Average Cloud Shading (% of Clear-Sky GHI Lost)",
+        yaxis_title="Cloud Shading (%)", height=310,
+        margin=dict(l=50,r=20,t=40,b=40),
+        plot_bgcolor="white", paper_bgcolor="white",
+        yaxis_range=[0, max(shading_m.values) * 1.25],
     )
     fig.update_yaxes(gridcolor="#E2E8F0", zeroline=False)
     fig.update_xaxes(gridcolor="rgba(0,0,0,0)")
@@ -475,14 +516,15 @@ if "solar_result" in st.session_state:
     meta      = st.session_state["solar_meta"]
     p         = st.session_state["solar_params"]
 
-    n_yr  = meta["n_years"]
-    aey   = meta["annual_ac_kwh"]           # kWh/yr
-    sy    = meta["specific_yield"]          # kWh/kWp/yr
-    cf    = meta["capacity_factor"] * 100   # %
-    pr    = meta["performance_ratio"] * 100 # %
-    ghi   = meta["annual_ghi_kwh_m2"]       # kWh/m²/yr
-    poa   = meta["annual_poa_kwh_m2"]       # kWh/m²/yr
-    inv   = meta["inverter_kw"]
+    n_yr   = meta["n_years"]
+    aey    = meta["annual_ac_kwh"]              # kWh/yr
+    sy     = meta["specific_yield"]             # kWh/kWp/yr
+    cf     = meta["capacity_factor"] * 100      # %
+    pr     = meta["performance_ratio"] * 100    # %
+    ghi    = meta["annual_ghi_kwh_m2"]          # kWh/m2/yr
+    poa    = meta["annual_poa_kwh_m2"]          # kWh/m2/yr
+    inv    = meta["inverter_kw"]
+    cloud  = meta["mean_cloud_shading_pct"]     # %
 
     # ── KPI cards ──────────────────────────────────────────────────────────────
     def _kpi(col, val, unit, label):
@@ -494,13 +536,14 @@ if "solar_result" in st.session_state:
             f'</div>', unsafe_allow_html=True
         )
 
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
-    _kpi(c1, f"{aey/1000:,.0f}", "MWh/yr",       f"Annual AC Energy ({n_yr:.1f} yr avg)")
-    _kpi(c2, f"{sy:,.0f}",       "kWh/kWp/yr",   "Specific Yield")
-    _kpi(c3, f"{cf:.1f}%",       "",              "Capacity Factor (AC)")
-    _kpi(c4, f"{pr:.1f}%",       "",              "Performance Ratio")
-    _kpi(c5, f"{ghi:.0f}",       "kWh/m²/yr",    "Annual GHI")
-    _kpi(c6, f"{poa:.0f}",       "kWh/m²/yr",    "Annual POA Irradiation")
+    c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
+    _kpi(c1, f"{aey/1000:,.0f}", "MWh/yr",      f"Annual AC Energy ({n_yr:.1f} yr avg)")
+    _kpi(c2, f"{sy:,.0f}",       "kWh/kWp/yr",  "Specific Yield")
+    _kpi(c3, f"{cf:.1f}%",       "",             "Capacity Factor (AC)")
+    _kpi(c4, f"{pr:.1f}%",       "",             "Performance Ratio")
+    _kpi(c5, f"{ghi:.0f}",       "kWh/m2/yr",   "Annual GHI")
+    _kpi(c6, f"{poa:.0f}",       "kWh/m2/yr",   "Annual POA Irradiation")
+    _kpi(c7, f"{cloud:.1f}%",    "daytime avg",  "Cloud Shading")
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -515,7 +558,9 @@ if "solar_result" in st.session_state:
     with col_c:
         st.plotly_chart(_chart_irradiance(result_df), use_container_width=True)
     with col_d:
-        st.plotly_chart(_chart_annual_cf(result_df, inv), use_container_width=True)
+        st.plotly_chart(_chart_cloud_shading(result_df), use_container_width=True)
+
+    st.plotly_chart(_chart_annual_cf(result_df, inv), use_container_width=True)
 
     # ── annual table ───────────────────────────────────────────────────────────
     st.markdown("#### Annual Energy Summary")
@@ -524,13 +569,16 @@ if "solar_result" in st.session_state:
     yr_ac  = (result_df.groupby(result_df.index.year)["ac_power_kw"].sum() / 1000.0).round(1)
     yr_sy  = (result_df.groupby(result_df.index.year)["ac_power_kw"].sum() / p["capacity_kwp"]).round(0).astype(int)
     yr_cf  = (result_df.groupby(result_df.index.year)["ac_power_kw"].sum() / (inv * 8760.0) * 100).round(1)
+    day    = result_df[result_df["ghi_clear_wm2"] > 5]
+    yr_cloud = day.groupby(day.index.year)["cloud_shading_pct"].mean().round(1)
 
     tbl = pd.DataFrame({
-        "GHI (kWh/m²)":        yr_ghi.values,
-        "POA (kWh/m²)":        yr_poa.values,
-        "AC Energy (MWh)":     yr_ac.values,
-        "Spec. Yield (kWh/kWp)": yr_sy.values,
-        "Cap. Factor (%)":     yr_cf.values,
+        "GHI (kWh/m2)":           yr_ghi.values,
+        "POA (kWh/m2)":           yr_poa.values,
+        "AC Energy (MWh)":        yr_ac.values,
+        "Spec. Yield (kWh/kWp)":  yr_sy.values,
+        "Cap. Factor (%)":        yr_cf.values,
+        "Cloud Shading (%)":      yr_cloud.values,
     }, index=yr_ghi.index.astype(str))
     tbl.index.name = "Year"
     st.dataframe(tbl, use_container_width=True)
@@ -540,35 +588,36 @@ if "solar_result" in st.session_state:
 
     dl = result_df.copy()
     dl.index = dl.index.tz_localize(None)
-    dl.index.name = "datetime_utc"
+    dl.index.name = "datetime_local"
 
     hdr = "\n".join([
-        f"# Solar PV Time Series — NASA POWER × pvlib",
-        f"# Site: ({p['lat']:.4f}, {p['lon']:.4f}) · Elevation: {p['elevation']} m ASL · Timezone: {p['tz']}",
-        f"# Period: {p['start_year']}–{p['end_year']} ({n_yr:.1f} yr)",
-        f"# System: {p['capacity_kwp']:,.0f} kWp DC · Tilt: {p['tilt']}° · Azimuth: {p['azimuth']}° from N · DC:AC: {p['dc_ac_ratio']:.2f}",
-        f"# Temp coefficient: {p['temp_coeff']:.2f} %/°C · System losses: {p['system_losses']} %",
-        f"# Annual AC Energy: {aey/1000:,.1f} MWh/yr · Specific Yield: {sy:,.0f} kWh/kWp/yr · CF: {cf:.1f}% · PR: {pr:.1f}%",
-        f"#",
+        "# Solar PV Time Series - NASA POWER x pvlib",
+        f"# Site: ({p['lat']:.4f}, {p['lon']:.4f}) Elevation: {p['elevation']} m ASL Timezone: {p['tz']}",
+        f"# Period: {p['start_year']}-{p['end_year']} ({n_yr:.1f} yr)",
+        f"# System: {p['capacity_kwp']:,.0f} kWp DC Tilt: {p['tilt']} deg Azimuth: {p['azimuth']} deg from N DC:AC: {p['dc_ac_ratio']:.2f}",
+        f"# Temp coefficient: {p['temp_coeff']:.2f} pct/degC System losses: {p['system_losses']} pct",
+        f"# Annual AC Energy: {aey/1000:,.1f} MWh/yr Specific Yield: {sy:,.0f} kWh/kWp/yr CF: {cf:.1f}% PR: {pr:.1f}% Cloud Shading: {cloud:.1f}%",
+        "#",
     ])
     buf = io.StringIO()
     buf.write(hdr + "\n")
     dl.to_csv(buf)
-    csv_bytes = buf.getvalue().encode()
+    # utf-8-sig adds BOM so Excel opens special characters correctly
+    csv_bytes = buf.getvalue().encode("utf-8-sig")
 
     fname = (f"solar_ts_{p['start_year']}_{p['end_year']}_"
              f"{p['lat']:.3f}_{p['lon']:.3f}.csv")
 
     st.download_button(
-        label=f"⬇️  Download Time Series CSV  ({n_yr:.0f} yr · {len(result_df):,} rows · hourly UTC)",
+        label=f"Download Time Series CSV  ({n_yr:.0f} yr - {len(result_df):,} rows - hourly local time)",
         data=csv_bytes,
         file_name=fname,
         mime="text/csv",
         use_container_width=True,
     )
     st.caption(
-        "Columns: datetime_utc · ghi_wm2 · dni_wm2 · dhi_wm2 · poa_wm2 · "
-        "temp_air_c · temp_cell_c · wind_speed_ms · dc_power_kw · ac_power_kw"
+        "Columns: datetime_local, ghi_wm2, ghi_clear_wm2, cloud_shading_pct, "
+        "dni_wm2, dhi_wm2, poa_wm2, temp_air_c, temp_cell_c, wind_speed_ms, dc_power_kw, ac_power_kw"
     )
 
     # ── methodology note ───────────────────────────────────────────────────────
