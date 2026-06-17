@@ -51,38 +51,38 @@ _BATCH_COLS = {
 st.markdown("""
 <style>
 html, body, [class*="css"] {
-    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif !important;
+    font-family: "Courier New", Courier, monospace !important;
     -webkit-font-smoothing: antialiased;
 }
-section[data-testid="stSidebar"] { background:#0F2040; border-right:1px solid #1E3A5F; }
+section[data-testid="stSidebar"] { background:#0D1A0D; border-right:1px solid #1A3A1A; }
 section[data-testid="stSidebar"] .stButton>button {
-    background:#3B82F6; color:#FFF; border-radius:6px; font-weight:600;
-    width:100%; padding:0.6rem 1rem; border:none;
+    background:#39D353; color:#000; border-radius:4px; font-weight:700;
+    width:100%; padding:0.6rem 1rem; border:none; font-family:monospace;
 }
-section[data-testid="stSidebar"] .stButton>button:hover { background:#2563EB; }
+section[data-testid="stSidebar"] .stButton>button:hover { background:#4ADE80; }
 .kpi-card {
-    background:#0F2040; border:1px solid #1E3A5F; border-radius:8px;
+    background:#0D1A0D; border:1px solid #1A3A1A; border-radius:4px;
     padding:1rem 0.8rem; text-align:center;
 }
-.kpi-card .val  { font-size:1.55rem; font-weight:700; color:#60A5FA; line-height:1.1; }
-.kpi-card .unit { font-size:0.72rem; color:#94A3B8; margin-top:0.1rem; }
-.kpi-card .lbl  { font-size:0.78rem; color:#CBD5E1; margin-top:0.2rem; }
+.kpi-card .val  { font-size:1.55rem; font-weight:700; color:#39D353; line-height:1.1; font-family:monospace; }
+.kpi-card .unit { font-size:0.72rem; color:#6EE7B7; margin-top:0.1rem; }
+.kpi-card .lbl  { font-size:0.78rem; color:#86EFAC; margin-top:0.2rem; }
 .stDownloadButton>button {
-    background:#0891B2; color:#FFF; border-radius:6px;
-    font-weight:600; width:100%; border:none;
+    background:#166534; color:#CCFFCC; border-radius:4px;
+    font-weight:700; width:100%; border:1px solid #39D353; font-family:monospace;
 }
-.stDownloadButton>button:hover { background:#0E7490; }
+.stDownloadButton>button:hover { background:#15803D; }
 </style>
 """, unsafe_allow_html=True)
 
 # ── header ────────────────────────────────────────────────────────────────────
 st.markdown("""
-<div style="background:linear-gradient(135deg,#0A1628 0%,#0F2040 60%,#1E3A5F 100%);
-            border:1px solid #1E3A5F; border-radius:10px; padding:1.2rem 1.8rem; margin-bottom:1.2rem;">
-  <h1 style="font-size:1.7rem; font-weight:700; color:#E2E8F0; margin:0;
-             letter-spacing:-0.03em; line-height:1.2;">
-    Solar PV Time Series &amp; Energy Analysis<br>
-    <span style="font-size:1.05rem; font-weight:400; color:#93C5FD;">
+<div style="background:#0D1A0D; border:1px solid #39D353;
+            border-radius:4px; padding:1.2rem 1.8rem; margin-bottom:1.2rem;">
+  <h1 style="font-size:1.7rem; font-weight:700; color:#39D353; margin:0;
+             font-family:'Courier New',monospace; line-height:1.2; letter-spacing:0.02em;">
+    &gt; SOLAR PV TIME SERIES &amp; ENERGY ANALYSIS_<br>
+    <span style="font-size:1.0rem; font-weight:400; color:#86EFAC;">
       NASA POWER (CERES/SRB) &middot; pvlib &middot; Single Site &amp; Batch
     </span>
   </h1>
@@ -453,13 +453,13 @@ def run_solar_pipeline(
 
 
 # ── chart helpers ─────────────────────────────────────────────────────────────
-_NAVY  = "#3B82F6"
-_TEAL  = "#06B6D4"
-_AMBER = "#FBBF24"
-_SLATE = "#94A3B8"
+_NAVY  = "#39D353"
+_TEAL  = "#4ADE80"
+_AMBER = "#86EFAC"
+_SLATE = "#6EE7B7"
 _BG    = "rgba(0,0,0,0)"
-_GRID  = "rgba(255,255,255,0.07)"
-_FONT  = "#94A3B8"
+_GRID  = "rgba(57,211,83,0.10)"
+_FONT  = "#6EE7B7"
 
 
 def _chart_monthly_energy(result_df: pd.DataFrame, tz: str, interval_h: float) -> go.Figure:
@@ -518,7 +518,7 @@ def _chart_irradiance(result_df: pd.DataFrame) -> go.Figure:
     grp = result_df.groupby(result_df.index.month)
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=months, y=grp["ghi_clear_wm2"].mean().round(1).values,
-                             name="Clear-sky GHI", line=dict(color="#475569", width=1.5, dash="dot")))
+                             name="Clear-sky GHI", line=dict(color="#1A3A1A", width=1.5, dash="dot")))
     fig.add_trace(go.Scatter(x=months, y=grp["ghi_wm2"].mean().round(1).values,
                              name="GHI (all-sky)", line=dict(color=_SLATE, width=2)))
     fig.add_trace(go.Scatter(x=months, y=grp["poa_wm2"].mean().round(1).values,
