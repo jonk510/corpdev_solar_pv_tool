@@ -89,6 +89,141 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+with st.expander("About this tool — data sources, inputs & calculations"):
+    st.markdown("""
+This tool produces a long-term hourly (or synthetic 30-min) solar PV energy time series
+for any location worldwide, using **NASA POWER satellite-derived irradiance** and the
+**pvlib** solar energy modelling library. It is designed for early-stage feasibility
+screening and indicative energy estimates — not for bankable yield assessments.
+
+---
+
+### Data Source — NASA POWER (CERES/SRB)
+
+Irradiance and meteorological data are fetched from
+[NASA POWER](https://power.larc.nasa.gov) (Prediction of Worldwide Energy Resources),
+a freely accessible dataset that provides hourly surface solar radiation derived from
+**CERES/SRB satellite measurements**, blended with MERRA-2 reanalysis meteorology.
+Key properties:
+
+- **Spatial resolution:** ~0.5° grid (~55 km at the equator). One grid node is extracted
+  for the input coordinates.
+- **Temporal coverage:** 1990 to near-present, hourly.
+- **Time convention:** Timestamps are in **Local Solar Time (LST)** — solar noon is at
+  exactly 12:00 regardless of civil timezone. The tool converts to local clock time using
+  the IANA timezone detected from the coordinates.
+- **Irradiance variables fetched:** GHI (global horizontal), DNI (direct normal), DHI
+  (diffuse horizontal), and clear-sky GHI (used for cloud shading diagnostics).
+- **Meteorology:** 2 m air temperature and 10 m wind speed (used for cell temperature).
+
+---
+
+### Inputs
+
+| Input | Description |
+|---|---|
+| **Latitude / Longitude** | Site coordinates. Elevation is auto-fetched from SRTM 30 m via OpenTopoData. |
+| **Start / End Year** | Period to average over. Longer periods reduce inter-annual noise. |
+| **Output Resolution** | Hourly (native) or synthetic 30-min (see below). |
+| **DC Capacity (kWp)** | Nameplate DC rating of the array. |
+| **Array Tilt (°)** | Panel tilt from horizontal. 0 = flat. Typical optimum ≈ latitude. |
+| **Array Azimuth (°)** | Panel facing direction. 0 = North, 90 = East, 180 = South, 270 = West. |
+| **DC:AC Ratio** | Ratio of DC capacity to inverter AC rating. Typical 1.1–1.3. |
+| **Temp. Coefficient (%/°C)** | Power loss per degree above 25 °C. Typical crystalline Si: −0.35 to −0.45 %/°C. |
+| **System Losses (%)** | Aggregate AC-side losses: wiring, inverter, soiling, mismatch, shading. Applied as a uniform derate. |
+
+---
+
+### Calculations
+
+**Step 1 — Irradiance transposition (GHI → POA)**
+
+Plane-of-array (POA) irradiance is computed using the
+**Hay-Davies transposition model** (pvlib `get_total_irradiance`):
+
+$$G_{POA} = G_{beam} \\cdot RB + G_{DHI} \\cdot R_d + G_{GHI} \\cdot R_r$$
+
+where RB is the beam tilt factor, R_d the anisotropic sky diffuse factor (accounts for
+circumsolar brightening and horizon brightening), and R_r the ground-reflected factor
+(albedo = 0.25). This model performs well across a range of climates and is widely used
+in bankable studies. The extraterrestrial DNI (dni_extra) used internally is computed via
+Spencer's Fourier series.
+
+**Step 2 — Cell temperature (Faiman model)**
+
+Cell temperature is estimated from POA irradiance, ambient air temperature, and wind speed
+using the **Faiman (1988) model** (pvlib `temperature.faiman`):
+
+$$T_{cell} = T_{air} + \\frac{G_{POA}}{U_0 + U_1 \\cdot v_{wind}}$$
+
+with U₀ = 25 W/m²·K and U₁ = 6.84 W·s/m³·K (open-rack glass/glass defaults). Higher
+wind speeds increase convective cooling and reduce cell temperature.
+
+**Step 3 — DC power**
+
+DC power is computed using a linear temperature-correction model:
+
+$$P_{DC} = C_{kWp} \\times \\frac{G_{POA}}{1000} \\times \\left[1 + \\frac{\\gamma}{100} \\times (T_{cell} - 25)\\right]$$
+
+where C_kWp is DC capacity, G_POA is in W/m², and γ is the temperature coefficient
+(%/°C, entered as a negative value for typical silicon modules).
+
+**Step 4 — AC power and system losses**
+
+AC power is obtained by applying the inverter clipping limit (DC:AC ratio) and system losses:
+
+$$P_{AC} = \\min\\left(P_{DC},\\ \\frac{C_{kWp}}{DC:AC}\\right) \\times \\left(1 - \\frac{L_{sys}}{100}\\right)$$
+
+---
+
+### Performance Metrics
+
+| Metric | Formula | Notes |
+|---|---|---|
+| **Annual AC Energy (AEY)** | Sum of P_AC × interval_h | kWh/yr averaged over the selected period |
+| **Specific Yield (SY)** | AEY / C_kWp | kWh/kWp/yr — array size independent |
+| **Capacity Factor (CF)** | AEY / (P_inverter_kW × 8760) | AC inverter referenced, per IEC |
+| **Performance Ratio (PR)** | AEY / (POA × C_kWp) | POA-referenced per IEC 61724-1 (not GHI) |
+| **Cloud Shading (%)** | Mean of (1 − GHI/GHI_clear) × 100 | Daytime only (GHI_clear > 5 W/m²) |
+
+---
+
+### Synthetic 30-min Resolution (optional)
+
+When 30-min output is selected, hourly NASA POWER GHI is disaggregated to 30-min using a
+**clearness-index interpolation** method:
+
+1. pvlib Ineichen clear-sky GHI is computed at 30-min resolution.
+2. The hourly clearness index Kt = GHI / GHI_clear is interpolated linearly to 30-min.
+3. 30-min GHI = Kt_30 × GHI_clear_30, clipped to ≥ 0.
+4. The :00 mark of each hour is **anchored to the original NASA POWER value** to prevent
+   energy drift between the two clear-sky models (NASA POWER CERES vs. pvlib Ineichen).
+5. DNI and DHI at 30-min are re-derived via Erbs decomposition.
+
+This produces a plausible sub-hourly profile consistent with the hourly totals — it is
+not the real measured 30-min record.
+
+---
+
+### Limitations
+
+- **Spatial resolution ~0.5°.** Local shading, terrain, or microclimate effects within
+  ~55 km are not captured. Results may diverge significantly from a site-specific
+  irradiance measurement.
+- **No explicit soiling, degradation, or detailed shading model.** These are folded into
+  the uniform system losses input.
+- **NASA POWER accuracy.** CERES/SRB has a global mean bias of ~1–3% vs. ground
+  measurements but errors can be larger at individual sites, particularly in complex
+  terrain or high-aerosol regions.
+- **30-min output is synthetic.** The disaggregation preserves hourly totals but the
+  within-hour distribution is modelled, not measured.
+- **Performance Ratio uses a simple DC model.** Advanced inverter efficiency curves,
+  module-level mismatch, and spectral correction are not included.
+
+> Results are indicative only. Use for early-stage screening and feasibility — not as a
+> substitute for a bankable energy yield assessment based on on-site measurements.
+    """)
+
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 @st.cache_data(show_spinner=False)
