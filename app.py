@@ -38,12 +38,15 @@ NASA_PARAMS = "ALLSKY_SFC_SW_DWN,ALLSKY_SFC_SW_DNI,ALLSKY_SFC_SW_DIFF,CLRSKY_SFC
 _BATCH_COLS = {
     "required": ["site_name", "latitude", "longitude", "capacity_kwp"],
     "optional": {
-        "tilt_deg":           None,   # auto: round(abs(lat))
-        "azimuth_deg":        0,
+        "mount_type":         "Fixed",   # "Fixed" or "SAT"
+        "tilt_deg":           None,      # auto: round(abs(lat)); ignored when mount_type=SAT
+        "azimuth_deg":        0,         # ignored when mount_type=SAT
+        "axis_azimuth_deg":   0,         # SAT only: tracker axis azimuth (0 = N-S)
+        "max_rotation_deg":   45,        # SAT only: max panel rotation from horizontal
         "dc_ac_ratio":        1.15,
         "temp_coeff_pct_c":  -0.40,
         "system_losses_pct":  8,
-        "elevation_m_asl":    None,   # auto: SRTM lookup
+        "elevation_m_asl":    None,      # auto: SRTM lookup
     },
 }
 
@@ -371,6 +374,11 @@ def run_solar_pipeline(
     temp_coeff: float,
     system_losses_pct: float,
     resolution: str = "Hourly",
+    mount_type: str = "Fixed",
+    axis_azimuth: float = 0.0,
+    max_rotation: float = 45.0,
+    backtrack: bool = True,
+    gcr: float = 0.40,
 ) -> tuple:
     """pvlib pipeline → (result_df, meta_dict). resolution: 'Hourly' or '30-min'."""
     location = pvlib.location.Location(lat, lon, tz=tz, altitude=elevation)
@@ -384,9 +392,25 @@ def run_solar_pipeline(
     solpos = location.get_solarposition(times_local)
     dni_extra = pvlib.irradiance.get_extra_radiation(df.index)
 
+    if mount_type == "SAT":
+        tracking = pvlib.tracking.singleaxis(
+            apparent_zenith=solpos["apparent_zenith"],
+            apparent_azimuth=solpos["azimuth"],
+            axis_tilt=0.0,
+            axis_azimuth=axis_azimuth,
+            max_angle=max_rotation,
+            backtrack=backtrack,
+            gcr=gcr,
+        )
+        surface_tilt    = tracking["surface_tilt"].fillna(0.0).values
+        surface_azimuth = tracking["surface_azimuth"].fillna(axis_azimuth).values
+    else:
+        surface_tilt    = tilt
+        surface_azimuth = azimuth
+
     poa_irr = pvlib.irradiance.get_total_irradiance(
-        surface_tilt=tilt,
-        surface_azimuth=azimuth,
+        surface_tilt=surface_tilt,
+        surface_azimuth=surface_azimuth,
         solar_zenith=solpos["apparent_zenith"].values,
         solar_azimuth=solpos["azimuth"].values,
         dni=df["dni"].values,
@@ -647,11 +671,17 @@ def _render_results(result_df, meta, p):
     dl = result_df.copy()
     dl.index = dl.index.tz_localize(None)
     dl.index.name = "datetime_local"
+    if p.get("mount_type") == "SAT":
+        sys_line = (f"# System: {cap:,.0f} kWp DC SAT Axis az: {p['axis_azimuth']} deg "
+                    f"Max rot: {p['max_rotation']} deg DC:AC: {p['dc_ac_ratio']:.2f}")
+    else:
+        sys_line = (f"# System: {cap:,.0f} kWp DC Fixed Tilt: {p['tilt']} deg "
+                    f"Az: {p['azimuth']} deg DC:AC: {p['dc_ac_ratio']:.2f}")
     hdr = "\n".join([
         "# Solar PV Time Series - NASA POWER x pvlib",
         f"# Site: ({p['lat']:.4f}, {p['lon']:.4f}) Elev: {p['elevation']} m ASL TZ: {p['tz']}",
         f"# Period: {p['start_year']}-{p['end_year']} ({n_yr:.1f} yr) Resolution: {res_label}",
-        f"# System: {cap:,.0f} kWp DC Tilt: {p['tilt']} deg Az: {p['azimuth']} deg DC:AC: {p['dc_ac_ratio']:.2f}",
+        sys_line,
         f"# Temp coeff: {p['temp_coeff']:.2f} pct/degC System losses: {p['system_losses']} pct",
         f"# AEY: {aey/1000:,.1f} MWh/yr SY: {sy:,.0f} kWh/kWp/yr CF: {cf:.1f}% PR: {pr:.1f}% Cloud: {cloud:.1f}%",
         "#",
@@ -707,11 +737,40 @@ with st.sidebar:
         capacity_kwp = st.number_input(
             "Capacity (kWp DC)", value=10_000.0, min_value=1.0, max_value=2_000_000.0, step=500.0,
         )
-        tilt = st.slider("Tilt (deg from horizontal)", 0, 90, min(int(round(abs(lat))), 60))
-        azimuth = st.slider(
-            "Azimuth (deg from North)", 0, 359, 0,
-            help="0 = North (S. hemisphere optimal). 180 = South (N. hemisphere optimal).",
+        mount_type = st.radio(
+            "Mount Type", ["Fixed Tilt", "Single-Axis Tracking (SAT)"], horizontal=True,
+            help="SAT rotates panels around a N-S axis to track the sun throughout the day.",
         )
+        if mount_type == "Fixed Tilt":
+            tilt = st.slider("Tilt (deg from horizontal)", 0, 90, min(int(round(abs(lat))), 60))
+            azimuth = st.slider(
+                "Azimuth (deg from North)", 0, 359, 0,
+                help="0 = North (S. hemisphere optimal). 180 = South (N. hemisphere optimal).",
+            )
+            axis_azimuth = 0.0
+            max_rotation = 45.0
+            backtrack    = True
+            gcr          = 0.40
+        else:
+            tilt     = 0
+            azimuth  = 0
+            axis_azimuth = st.slider(
+                "Tracker Axis Azimuth (deg from North)", 0, 359, 0,
+                help="Azimuth of the tracker rotation axis. 0 = N-S axis (standard for most sites).",
+            )
+            max_rotation = st.slider(
+                "Max Rotation Angle (deg)", 30, 60, 45,
+                help="Maximum panel tilt from horizontal. Typical utility-scale: 45–60°.",
+            )
+            backtrack = st.checkbox(
+                "Backtracking", value=True,
+                help="Rotates panels back towards horizontal to avoid inter-row shading at low sun angles.",
+            )
+            gcr = st.slider(
+                "Ground Coverage Ratio (GCR)", 0.10, 0.90, 0.40, 0.05,
+                help="Row collector width / row pitch. Typical utility-scale: 0.35–0.45. "
+                     "Only used when backtracking is enabled.",
+            ) if backtrack else 0.40
         dc_ac_ratio = st.slider("DC:AC Ratio", 1.0, 1.5, 1.15, 0.05)
         temp_coeff  = st.slider("Temp Coefficient (%/degC)", -0.60, -0.20, -0.40, 0.01)
         system_losses = st.slider("System Losses (%)", 0, 30, 8)
@@ -737,10 +796,17 @@ if app_mode == "Single Site":
         st_folium(m, height=260, width=None, returned_objects=[])
     with col_info:
         tz_auto = _get_tz(lat, lon)
+        if mount_type == "Single-Axis Tracking (SAT)":
+            bt_str = f"BT GCR={gcr:.2f}" if backtrack else "no BT"
+            system_desc = (f"`{capacity_kwp:,.0f} kWp`  SAT  Axis az: `{axis_azimuth}°`  "
+                           f"Max rot: `±{max_rotation}°`  {bt_str}  DC:AC: `{dc_ac_ratio:.2f}`")
+        else:
+            system_desc = (f"`{capacity_kwp:,.0f} kWp`  Fixed  Tilt: `{tilt}°`  "
+                           f"Az: `{azimuth}°`  DC:AC: `{dc_ac_ratio:.2f}`")
         st.markdown(f"""
 **Site**  Lat/Lon: `{lat:.4f} / {lon:.4f}`  Elev: `{elevation} m`  TZ: `{tz_auto}`
 
-**System**  `{capacity_kwp:,.0f} kWp`  Tilt: `{tilt}deg`  Az: `{azimuth}deg`  DC:AC: `{dc_ac_ratio:.2f}`
+**System**  {system_desc}
 
 **Data**  NASA POWER  `{start_year}-{end_year}`  Resolution: `{resolution}`
         """)
@@ -762,6 +828,9 @@ if app_mode == "Single Site":
                     df_raw, lat, lon, elevation, tz,
                     tilt, azimuth, capacity_kwp, dc_ac_ratio, temp_coeff, system_losses,
                     resolution="30-min" if "30" in resolution else "Hourly",
+                    mount_type="SAT" if "SAT" in mount_type else "Fixed",
+                    axis_azimuth=axis_azimuth, max_rotation=max_rotation,
+                    backtrack=backtrack, gcr=gcr,
                 )
             except Exception as e:
                 st.error(f"Pipeline failed: {e}")
@@ -775,6 +844,8 @@ if app_mode == "Single Site":
                 "dc_ac_ratio": dc_ac_ratio, "temp_coeff": temp_coeff,
                 "system_losses": system_losses,
                 "start_year": start_year, "end_year": end_year,
+                "mount_type": "SAT" if "SAT" in mount_type else "Fixed",
+                "axis_azimuth": axis_azimuth, "max_rotation": max_rotation,
             },
         })
 
@@ -800,8 +871,11 @@ else:
 | `latitude` | Yes | — | Decimal degrees |
 | `longitude` | Yes | — | Decimal degrees |
 | `capacity_kwp` | Yes | — | DC array capacity (kWp) |
-| `tilt_deg` | No | `round(abs(lat))` | Panel tilt from horizontal |
-| `azimuth_deg` | No | `0` | Degrees from North (0=N optimal S. hemisphere, 180=S optimal N. hemisphere) |
+| `mount_type` | No | `Fixed` | `Fixed` or `SAT` (single-axis tracking) |
+| `tilt_deg` | No | `round(abs(lat))` | Fixed tilt from horizontal — ignored for SAT |
+| `azimuth_deg` | No | `0` | Fixed azimuth from North — ignored for SAT |
+| `axis_azimuth_deg` | No | `0` | SAT only: tracker axis azimuth (0 = N-S axis) |
+| `max_rotation_deg` | No | `45` | SAT only: max panel rotation from horizontal |
 | `dc_ac_ratio` | No | `1.15` | DC capacity / inverter rating |
 | `temp_coeff_pct_c` | No | `-0.40` | Power loss per degC above 25 |
 | `system_losses_pct` | No | `8` | Soiling, wiring, availability etc. |
@@ -843,11 +917,14 @@ else:
                     return default
                 return v
 
-            tilt_i = _opt("tilt_deg",          min(int(round(abs(lat_i))), 60))
-            az_i   = _opt("azimuth_deg",        0)
-            dc_i   = _opt("dc_ac_ratio",        1.15)
-            tc_i   = _opt("temp_coeff_pct_c",  -0.40)
-            sl_i   = _opt("system_losses_pct",  8)
+            mt_i   = str(_opt("mount_type",        "Fixed")).strip()
+            tilt_i = _opt("tilt_deg",               min(int(round(abs(lat_i))), 60))
+            az_i   = _opt("azimuth_deg",             0)
+            ax_i   = _opt("axis_azimuth_deg",        0)
+            mr_i   = _opt("max_rotation_deg",        45)
+            dc_i   = _opt("dc_ac_ratio",             1.15)
+            tc_i   = _opt("temp_coeff_pct_c",       -0.40)
+            sl_i   = _opt("system_losses_pct",       8)
             elev_v = row.get("elevation_m_asl", None)
             elev_i = (int(round(float(elev_v)))
                       if (elev_v is not None and not (isinstance(elev_v, float) and pd.isna(elev_v)))
@@ -861,6 +938,8 @@ else:
                     df_raw_i, lat_i, lon_i, elev_i, tz_i,
                     float(tilt_i), float(az_i), cap_i, float(dc_i), float(tc_i), float(sl_i),
                     resolution=res_key,
+                    mount_type="SAT" if mt_i.upper() == "SAT" else "Fixed",
+                    axis_azimuth=float(ax_i), max_rotation=float(mr_i),
                 )
                 summary_rows.append({
                     "site_name":              site,
@@ -868,8 +947,11 @@ else:
                     "longitude":              lon_i,
                     "elevation_m_asl":        elev_i,
                     "capacity_kwp":           cap_i,
-                    "tilt_deg":               int(tilt_i),
-                    "azimuth_deg":            int(az_i),
+                    "mount_type":             "SAT" if mt_i.upper() == "SAT" else "Fixed",
+                    "tilt_deg":               int(tilt_i) if mt_i.upper() != "SAT" else "-",
+                    "azimuth_deg":            int(az_i)   if mt_i.upper() != "SAT" else "-",
+                    "axis_azimuth_deg":       int(ax_i)   if mt_i.upper() == "SAT" else "-",
+                    "max_rotation_deg":       int(mr_i)   if mt_i.upper() == "SAT" else "-",
                     "dc_ac_ratio":            round(float(dc_i), 2),
                     "annual_ghi_kwh_m2":      round(meta_i["annual_ghi_kwh_m2"]),
                     "annual_poa_kwh_m2":      round(meta_i["annual_poa_kwh_m2"]),
