@@ -14,7 +14,9 @@ import plotly.graph_objects as go
 import streamlit as st
 import folium
 from streamlit_folium import st_folium
-from timezonefinder import TimezoneFinder
+import os, sys
+from shared.timezone_lookup import get_timezone as _tz_lookup
+from shared.srtm import fetch_point_elevation as _fetch_point_elev
 
 warnings.filterwarnings("ignore")
 
@@ -50,47 +52,9 @@ _BATCH_COLS = {
     },
 }
 
-# ── CSS ───────────────────────────────────────────────────────────────────────
-st.markdown("""
-<style>
-html, body, [class*="css"] {
-    font-family: "Courier New", Courier, monospace !important;
-    -webkit-font-smoothing: antialiased;
-}
-section[data-testid="stSidebar"] { background:#0D1A0D; border-right:1px solid #1A3A1A; }
-section[data-testid="stSidebar"] .stButton>button {
-    background:#39D353; color:#000; border-radius:4px; font-weight:700;
-    width:100%; padding:0.6rem 1rem; border:none; font-family:monospace;
-}
-section[data-testid="stSidebar"] .stButton>button:hover { background:#4ADE80; }
-.kpi-card {
-    background:#0D1A0D; border:1px solid #1A3A1A; border-radius:4px;
-    padding:1rem 0.8rem; text-align:center;
-}
-.kpi-card .val  { font-size:1.55rem; font-weight:700; color:#39D353; line-height:1.1; font-family:monospace; }
-.kpi-card .unit { font-size:0.72rem; color:#6EE7B7; margin-top:0.1rem; }
-.kpi-card .lbl  { font-size:0.78rem; color:#86EFAC; margin-top:0.2rem; }
-.stDownloadButton>button {
-    background:#166534; color:#CCFFCC; border-radius:4px;
-    font-weight:700; width:100%; border:1px solid #39D353; font-family:monospace;
-}
-.stDownloadButton>button:hover { background:#15803D; }
-</style>
-""", unsafe_allow_html=True)
-
-# ── header ────────────────────────────────────────────────────────────────────
-st.markdown("""
-<div style="background:#0D1A0D; border:1px solid #39D353;
-            border-radius:4px; padding:1.2rem 1.8rem; margin-bottom:1.2rem;">
-  <h1 style="font-size:1.7rem; font-weight:700; color:#39D353; margin:0;
-             font-family:'Courier New',monospace; line-height:1.2; letter-spacing:0.02em;">
-    &gt; SOLAR PV TIME SERIES &amp; ENERGY ANALYSIS_<br>
-    <span style="font-size:1.0rem; font-weight:400; color:#86EFAC;">
-      NASA POWER (CERES/SRB) &middot; pvlib &middot; Single Site &amp; Batch
-    </span>
-  </h1>
-</div>
-""", unsafe_allow_html=True)
+from shared.style import apply_theme, page_header, kpi_card
+apply_theme()
+page_header("Solar PV Time Series & Energy Analysis", "NASA POWER (CERES/SRB) · pvlib · Single Site & Batch")
 
 with st.expander("About this tool — data sources, inputs & calculations"):
     st.markdown("""
@@ -231,22 +195,12 @@ not the real measured 30-min record.
 # ── helpers ───────────────────────────────────────────────────────────────────
 @st.cache_data(show_spinner=False)
 def _get_tz(lat: float, lon: float) -> str:
-    return TimezoneFinder().timezone_at(lat=lat, lng=lon) or "UTC"
+    return _tz_lookup(lat, lon)
 
 
 @st.cache_data(show_spinner=False)
 def _get_elevation(lat: float, lon: float) -> int:
-    try:
-        r = requests.get(
-            "https://api.opentopodata.org/v1/srtm30m",
-            params={"locations": f"{lat},{lon}"},
-            timeout=10,
-        )
-        r.raise_for_status()
-        elev = r.json()["results"][0]["elevation"]
-        return int(round(elev)) if elev is not None else 0
-    except Exception:
-        return 0
+    return _fetch_point_elev(lat, lon)
 
 
 # ── NASA POWER fetch ──────────────────────────────────────────────────────────

@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Solar PV Analysis — NASA POWER</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg:       #0D0D0D;
+  --sb:       #0D1A0D;
+  --card:     #0D1A0D;
+  --border:   #1A3A1A;
+  --green:    #39D353;
+  --gl:       #86EFAC;
+  --gm:       #6EE7B7;
+  --text:     #CCFFCC;
+  --font:     'Courier New', Courier, monospace;
+}
+body { background:var(--bg); color:var(--text); font-family:var(--font); display:flex; height:100vh; overflow:hidden; font-size:13px; }
+
+/* ── Sidebar ── */
+#sb { width:272px; min-width:272px; background:var(--sb); border-right:1px solid var(--border); display:flex; flex-direction:column; overflow-y:auto; padding:1rem; }
+#sb h1 { color:var(--green); font-size:0.82rem; font-weight:700; letter-spacing:0.04em; margin-bottom:0.1rem; }
+#sb .sub { color:var(--gl); font-size:0.62rem; margin-bottom:0.8rem; }
+.slbl { font-size:0.58rem; font-weight:700; letter-spacing:0.12em; text-transform:uppercase; color:var(--gm); margin:0.8rem 0 0.3rem; }
+label { font-size:0.68rem; color:var(--gm); display:block; margin:0.4rem 0 0.1rem; }
+input[type=number] { width:100%; background:#0A130A; border:1px solid var(--border); color:var(--text); font-family:var(--font); font-size:0.75rem; padding:0.3rem 0.45rem; border-radius:2px; }
+input[type=number]:focus { outline:none; border-color:var(--green); }
+.r2 { display:grid; grid-template-columns:1fr 1fr; gap:0.45rem; }
+small { font-size:0.58rem; color:var(--gm); display:block; margin-top:0.2rem; }
+hr { border:none; border-top:1px solid var(--border); margin:0.7rem 0; }
+#runBtn { margin-top:1rem; width:100%; padding:0.55rem; background:var(--green); color:#000; font-family:var(--font); font-size:0.78rem; font-weight:700; border:none; border-radius:2px; cursor:pointer; letter-spacing:0.04em; }
+#runBtn:hover { background:#4ADE80; }
+#runBtn:disabled { background:#1A3A1A; color:#3A5A3A; cursor:not-allowed; }
+
+/* ── Main ── */
+#main { flex:1; overflow-y:auto; padding:1rem 1.3rem; }
+.hdr { background:var(--sb); border:1px solid var(--border); border-radius:3px; padding:0.8rem 1.1rem; margin-bottom:0.8rem; }
+.hdr h2 { color:var(--green); font-size:1.1rem; }
+.hdr p  { color:var(--gl); font-size:0.62rem; margin-top:0.15rem; }
+#status { color:var(--gm); font-size:0.73rem; min-height:1.3rem; padding:0.2rem 0; }
+.err { color:#F87171 !important; }
+#placeholder { color:var(--gm); font-size:0.82rem; margin-top:3rem; text-align:center; line-height:2; }
+
+/* KPI */
+.kgrid { display:grid; grid-template-columns:repeat(7,1fr); gap:0.45rem; margin:0.7rem 0; }
+.kcard { background:var(--card); border:1px solid var(--border); border-radius:3px; padding:0.65rem 0.4rem; text-align:center; }
+.kval  { font-size:1.15rem; font-weight:700; color:var(--green); line-height:1.1; }
+.kunit { font-size:0.57rem; color:var(--gm); margin-top:0.1rem; }
+.klbl  { font-size:0.58rem; color:var(--gl); margin-top:0.15rem; }
+
+/* Charts */
+.cgrid { display:grid; grid-template-columns:1fr 1fr; gap:0.8rem; margin:0.7rem 0; }
+.cbox  { background:var(--card); border:1px solid var(--border); border-radius:3px; padding:0.4rem; }
+
+/* Table */
+.tw { overflow-x:auto; margin:0.7rem 0; }
+table { width:100%; border-collapse:collapse; font-size:0.68rem; }
+th { background:#0A130A; color:var(--green); padding:0.35rem 0.55rem; text-align:right; border-bottom:1px solid var(--border); }
+th:first-child { text-align:left; }
+td { padding:0.3rem 0.55rem; border-bottom:1px solid #0A1A0A; color:var(--gm); text-align:right; }
+td:first-child { color:var(--text); text-align:left; }
+
+/* Download */
+.dlbtn { display:inline-block; margin:0.6rem 0; padding:0.45rem 1rem; background:#166534; color:var(--text); border:1px solid var(--green); font-family:var(--font); font-size:0.73rem; font-weight:700; border-radius:2px; cursor:pointer; }
+.dlbtn:hover { background:#15803D; }
+.dlnote { font-size:0.58rem; color:var(--gm); margin-bottom:1rem; }
+</style>
+</head>
+<body>
+
+<!-- ── Sidebar ── -->
+<div id="sb">
+  <h1>&gt; SOLAR PV ANALYSIS_</h1>
+  <p class="sub">NASA POWER (CERES/SRB) · Hay-Davies · Faiman</p>
+  <hr>
+
+  <div class="slbl">Location</div>
+  <label>Latitude</label>
+  <input type="number" id="lat" value="-31.9505" step="0.0001" min="-90" max="90">
+  <label>Longitude</label>
+  <input type="number" id="lon" value="115.8605" step="0.0001" min="-180" max="180">
+
+  <div class="slbl">Date Range</div>
+  <div class="r2">
+    <div><label>Start Year</label><input type="number" id="sy" value="2015" min="1990" max="2024"></div>
+    <div><label>End Year</label><input type="number" id="ey" value="2023" min="1990" max="2024"></div>
+  </div>
+
+  <div class="slbl">System</div>
+  <label>DC Capacity (kWp)</label>
+  <input type="number" id="cap" value="1000" min="1" step="1">
+  <div class="r2">
+    <div><label>Tilt (°)</label><input type="number" id="tilt" value="15" min="0" max="90" step="1"></div>
+    <div><label>Azimuth (°)</label><input type="number" id="az" value="0" min="0" max="359" step="1"></div>
+  </div>
+  <small>Azimuth: 0=N · 90=E · 180=S · 270=W</small>
+  <div class="r2">
+    <div><label>DC:AC Ratio</label><input type="number" id="dcac" value="1.15" min="0.5" max="3" step="0.05"></div>
+    <div><label>Temp Coeff (%/°C)</label><input type="number" id="tc" value="-0.40" min="-1" max="0" step="0.01"></div>
+  </div>
+  <label>System Losses (%)</label>
+  <input type="number" id="sl" value="8" min="0" max="30" step="0.5">
+
+  <button id="runBtn" onclick="run()">[ RUN ANALYSIS ]</button>
+</div>
+
+<!-- ── Main ── -->
+<div id="main">
+  <div class="hdr">
+    <h2>&gt; Solar PV Time Series &amp; Energy Analysis_</h2>
+    <p>NASA POWER (CERES/SRB) · Hay-Davies transposition · Faiman cell temperature · IEC 61724-1 PR · No backend required</p>
+  </div>
+
+  <div id="status"></div>
+
+  <div id="placeholder">
+    <p style="color:var(--green);font-size:1rem">awaiting input_</p>
+    <p>Configure parameters in the sidebar and click [ RUN ANALYSIS ]</p>
+    <p style="font-size:0.65rem;margin-top:0.5rem">Fetches data directly from NASA POWER API · Works offline after first load</p>
+  </div>
+
+  <div id="results" style="display:none">
+    <div class="kgrid" id="kgrid"></div>
+    <div class="cgrid">
+      <div class="cbox"><div id="cMonthly" style="height:268px"></div></div>
+      <div class="cbox"><div id="cDiurnal" style="height:268px"></div></div>
+    </div>
+    <div class="cgrid">
+      <div class="cbox"><div id="cIrr"   style="height:268px"></div></div>
+      <div class="cbox"><div id="cCloud" style="height:268px"></div></div>
+    </div>
+    <div class="cbox" style="margin:0.7rem 0"><div id="cCF" style="height:230px"></div></div>
+
+    <div style="color:var(--green);font-size:0.72rem;font-weight:700;margin:0.5rem 0 0.3rem">Annual Summary</div>
+    <div class="tw"><table id="tbl"></table></div>
+
+    <button class="dlbtn" onclick="dlCSV()">[ DOWNLOAD TIME SERIES CSV ]</button>
+    <div class="dlnote">Columns: datetime_lst · ghi_wm2 · ghi_clear_wm2 · cloud_shading_pct · dni_wm2 · dhi_wm2 · poa_wm2 · temp_air_c · temp_cell_c · wind_speed_ms · dc_power_kw · ac_power_kw</div>
+  </div>
+</div>
+
+<script>
+// ── Palette ──────────────────────────────────────────────────────────────────
+const G = '#39D353', GL = '#86EFAC', GM = '#6EE7B7', GT = '#4ADE80';
+const BG = 'rgba(0,0,0,0)', GRID = 'rgba(57,211,83,0.09)';
+const FONT = { color: GM, family: "'Courier New',monospace", size: 10 };
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+const BL = { paper_bgcolor:BG, plot_bgcolor:BG, font:FONT, margin:{t:34,b:46,l:52,r:12} };
+const AX = { gridcolor:GRID, color:GM, zerolinecolor:GRID, zerolinewidth:1 };
+
+// ── Solar maths ──────────────────────────────────────────────────────────────
+const R = d => d * Math.PI / 180;
+
+function doy(yr, mo, dy) {
+  return Math.round((new Date(yr,mo-1,dy) - new Date(yr,0,1)) / 86400000) + 1;
+}
+
+function decl(d) {            // Spencer (1971), radians
+  const b = 2*Math.PI*(d-1)/365;
+  return 0.006918 - 0.399912*Math.cos(b) + 0.070257*Math.sin(b)
+       - 0.006758*Math.cos(2*b) + 0.000907*Math.sin(2*b)
+       - 0.002697*Math.cos(3*b) + 0.001480*Math.sin(3*b);
+}
+
+function et_dni(d) {          // Extraterrestrial DNI W/m²
+  const b = 2*Math.PI*(d-1)/365;
+  return 1367*(1.000110 + 0.034221*Math.cos(b) + 0.001280*Math.sin(b)
+              + 0.000719*Math.cos(2*b) + 0.000077*Math.sin(2*b));
+}
+
+function zenith(lat_r, dec_r, ha_r) {
+  return Math.acos(Math.max(-1, Math.min(1,
+    Math.sin(lat_r)*Math.sin(dec_r) + Math.cos(lat_r)*Math.cos(dec_r)*Math.cos(ha_r)
+  )));
+}
+
+function aoi(dec_r, lat_r, ha_r, tilt_r, gam_r) {
+  // Duffie & Beckman eq 1.6.2; gam = surface azimuth from south, west positive
+  return Math.acos(Math.max(-1, Math.min(1,
+    Math.sin(dec_r)*Math.sin(lat_r)*Math.cos(tilt_r)
+  - Math.sin(dec_r)*Math.cos(lat_r)*Math.sin(tilt_r)*Math.cos(gam_r)
+  + Math.cos(dec_r)*Math.cos(ha_r)*Math.cos(lat_r)*Math.cos(tilt_r)
+  + Math.cos(dec_r)*Math.cos(ha_r)*Math.sin(lat_r)*Math.sin(tilt_r)*Math.cos(gam_r)
+  + Math.cos(dec_r)*Math.sin(ha_r)*Math.sin(tilt_r)*Math.sin(gam_r)
+  )));
+}
+
+function hayDavies(ghi, dni, dhi, z_r, aoi_r, tilt_r, et, alb=0.25) {
+  const cz = Math.cos(z_r);
+  if (cz < 0.0872) return 0;                          // zenith > 85°
+  const ca  = Math.cos(aoi_r);
+  const Ai  = et > 0 ? Math.max(0, Math.min(1, dni/et)) : 0;
+  const Rb  = Math.max(0, ca) / cz;
+  return Math.max(0,
+    dni * Math.max(0,ca)                               // beam
+  + dhi * (Ai*Rb + (1-Ai)*(1+Math.cos(tilt_r))/2)    // sky diffuse
+  + ghi * alb * (1-Math.cos(tilt_r))/2                // ground reflected
+  );
+}
+
+function faiman(poa, ta, ws) { return ta + poa/(25 + 6.84*Math.max(0,ws)); }
+
+// ── NASA POWER fetch ─────────────────────────────────────────────────────────
+async function fetchYear(lat, lon, yr) {
+  const p = 'ALLSKY_SFC_SW_DWN,CLRSKY_SFC_SW_DWN,ALLSKY_SFC_SW_DNI,ALLSKY_SFC_SW_DIFF,T2M,WS10M';
+  const url = `https://power.larc.nasa.gov/api/temporal/hourly/point?parameters=${p}`
+            + `&community=RE&longitude=${lon}&latitude=${lat}`
+            + `&start=${yr}0101&end=${yr}1231&format=JSON`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`NASA POWER ${yr}: HTTP ${res.status}`);
+  const pd = (await res.json()).properties.parameter;
+  const fix = (v) => (v == null || v < -900) ? 0 : Math.max(0, v);
+  return Object.keys(pd['ALLSKY_SFC_SW_DWN']).map(k => ({
+    year:+k.slice(0,4), month:+k.slice(4,6), day:+k.slice(6,8), hour:+k.slice(8,10),
+    ghi: fix(pd['ALLSKY_SFC_SW_DWN'][k]),
+    clr: fix(pd['CLRSKY_SFC_SW_DWN'][k]),
+    dni: fix(pd['ALLSKY_SFC_SW_DNI'][k]),
+    dhi: fix(pd['ALLSKY_SFC_SW_DIFF'][k]),
+    ta:  pd['T2M'][k]   < -900 ? 20 : pd['T2M'][k],
+    ws:  Math.max(0, pd['WS10M'][k] < -900 ? 1 : pd['WS10M'][k]),
+  }));
+}
+
+// ── Main pipeline ─────────────────────────────────────────────────────────────
+let RES = [], META = {};
+
+async function run() {
+  const btn = document.getElementById('runBtn');
+  btn.disabled = true;
+  hide('results'); hide('placeholder'); setS('');
+  try {
+    const lat  = +v('lat'), lon = +v('lon');
+    const sy   = +v('sy'),  ey  = +v('ey');
+    const cap  = +v('cap'), tilt = +v('tilt'), az = +v('az');
+    const dcac = +v('dcac'), tc = +v('tc'), sl = +v('sl');
+    const inv  = cap / dcac;
+    const lat_r = R(lat), tilt_r = R(tilt);
+    const gam_r = R(az - 180);   // azimuth from south, west positive
+    const ny    = ey - sy + 1;
+
+    let raw = [];
+    for (let yr = sy; yr <= ey; yr++) {
+      setS(`Fetching NASA POWER ${yr}… (${yr-sy+1}/${ny})`);
+      raw = raw.concat(await fetchYear(lat, lon, yr));
+    }
+    setS(`Processing ${raw.length.toLocaleString()} records…`);
+
+    const res = raw.map(r => {
+      const d    = doy(r.year, r.month, r.day);
+      const dc_r = decl(d);
+      const ha_r = R((r.hour - 12) * 15);     // LST noon = HA 0
+      const z_r  = zenith(lat_r, dc_r, ha_r);
+      const a_r  = aoi(dc_r, lat_r, ha_r, tilt_r, gam_r);
+      const et   = et_dni(d);
+      const poa  = hayDavies(r.ghi, r.dni, r.dhi, z_r, a_r, tilt_r, et);
+      const tcell = faiman(poa, r.ta, r.ws);
+      const pdc  = Math.max(0, cap*(poa/1000)*(1+(tc/100)*(tcell-25)));
+      const pac  = Math.max(0, Math.min(pdc, inv)*(1-sl/100));
+      const cld  = r.clr > 5 ? Math.max(0, Math.min(100, (1-r.ghi/r.clr)*100)) : null;
+      return { ...r, poa, tcell, pdc, pac, cld };
+    });
+
+    RES = res;
+
+    // KPIs
+    const aac  = res.reduce((s,r)=>s+r.pac,0)/ny;
+    const apoa = res.reduce((s,r)=>s+r.poa,0)/ny/1000;
+    const aghi = res.reduce((s,r)=>s+r.ghi,0)/ny/1000;
+    const sy_  = aac/cap;
+    const cf   = aac/(inv*8760)*100;
+    const pr   = apoa>0 ? aac/(apoa*cap)*100 : 0;
+    const dr   = res.filter(r=>r.cld!==null);
+    const cm   = dr.length ? dr.reduce((s,r)=>s+r.cld,0)/dr.length : 0;
+
+    META = {lat,lon,sy,ey,cap,tilt,az,dcac,tc,sl,inv,ny,aac,apoa,aghi,sy_,cf,pr,cm};
+    render(res, META);
+    setS('');
+    show('results');
+  } catch(e) {
+    setS('Error: '+e.message, true);
+    show('placeholder');
+  } finally { btn.disabled=false; }
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+const v   = id => document.getElementById(id).value;
+const show = id => document.getElementById(id).style.display = '';
+const hide = id => document.getElementById(id).style.display = 'none';
+const f0  = n => n.toLocaleString('en-AU',{maximumFractionDigits:0});
+const f1  = n => n.toLocaleString('en-AU',{minimumFractionDigits:1,maximumFractionDigits:1});
+const setS = (m, err=false) => {
+  const el = document.getElementById('status');
+  el.textContent = m ? '> '+m : '';
+  el.className = err ? 'err' : '';
+};
+
+// ── Render ─────────────────────────────────────────────────────────────────────
+function render(res, m) {
+  // KPIs
+  const K = (val,unit,lbl) => `<div class="kcard"><div class="kval">${val}</div><div class="kunit">${unit}</div><div class="klbl">${lbl}</div></div>`;
+  document.getElementById('kgrid').innerHTML =
+    K(f1(m.aac/1000),'MWh/yr',`Annual AC Energy (${m.ny}yr avg)`) +
+    K(f0(m.sy_),'kWh/kWp/yr','Specific Yield') +
+    K(f1(m.cf)+'%','','Capacity Factor (AC)') +
+    K(f1(m.pr)+'%','','Performance Ratio') +
+    K(f0(m.aghi),'kWh/m²/yr','Annual GHI') +
+    K(f0(m.apoa),'kWh/m²/yr','Annual POA') +
+    K(f1(m.cm)+'%','daytime avg','Cloud Shading');
+
+  chartMonthly(res, m);
+  chartDiurnal(res, m.lat);
+  chartIrr(res);
+  chartCloud(res);
+  chartCF(res, m);
+  renderTable(res, m);
+}
+
+function tLayout(title, yTitle, extra={}) {
+  return { ...BL,
+    title:{ text:title, font:{color:GL,size:11,family:"'Courier New',monospace"} },
+    xaxis:{ ...AX, ...(extra.xaxis||{}) },
+    yaxis:{ ...AX, title:yTitle, ...(extra.yaxis||{}) },
+    showlegend: extra.showlegend||false,
+    legend: extra.legend||{},
+    ...Object.fromEntries(Object.entries(extra).filter(([k])=>!['xaxis','yaxis','showlegend','legend'].includes(k))),
+  };
+}
+const PC = { responsive:true, displayModeBar:false };
+
+function chartMonthly(res, m) {
+  const monthly = Array.from({length:12},(_,i)=>{
+    const yrs = [...new Set(res.filter(r=>r.month===i+1).map(r=>r.year))];
+    return yrs.length ? yrs.map(y=>res.filter(r=>r.month===i+1&&r.year===y).reduce((s,r)=>s+r.pac,0)/1000).reduce((a,b)=>a+b,0)/yrs.length : 0;
+  });
+  Plotly.newPlot('cMonthly',[{type:'bar',x:MONTHS,y:monthly.map(v=>+v.toFixed(1)),
+    marker:{color:G},text:monthly.map(v=>v.toFixed(0)),textposition:'outside',
+    textfont:{color:GM,size:9}}],
+    tLayout('Average Monthly AC Energy (MWh)','MWh'),PC);
+}
+
+function season(mo, lat) {
+  if(lat<0) return mo<=2||mo===12?'Summer':mo<=5?'Autumn':mo<=8?'Winter':'Spring';
+  return mo<=2||mo===12?'Winter':mo<=5?'Spring':mo<=8?'Summer':'Autumn';
+}
+
+function chartDiurnal(res, lat) {
+  const SC = {Summer:'#EF4444',Autumn:'#FBBF24',Winter:'#3B82F6',Spring:'#22C55E'};
+  const traces = Object.entries(SC).map(([s,c])=>{
+    const rows = res.filter(r=>season(r.month,lat)===s);
+    const y = Array.from({length:24},(_,h)=>{
+      const hr = rows.filter(r=>r.hour===h);
+      return hr.length ? +(hr.reduce((a,b)=>a+b.pac,0)/hr.length).toFixed(1) : 0;
+    });
+    return {type:'scatter',mode:'lines',name:s,x:[...Array(24).keys()],y,line:{color:c,width:2},showlegend:true};
+  });
+  Plotly.newPlot('cDiurnal',traces,tLayout('Average Diurnal AC Power (by Season)','kW',{
+    showlegend:true,
+    legend:{orientation:'h',y:-0.22,font:{color:GM,size:9}},
+    xaxis:{...AX,title:'Hour (LST)',dtick:2},
+  }),PC);
+}
+
+function chartIrr(res) {
+  const mg = m => Array.from({length:12},(_,i)=>{const r=res.filter(r=>r.month===i+1);return r.length?+(r.reduce((s,x)=>s+x[m],0)/r.length).toFixed(1):0;});
+  Plotly.newPlot('cIrr',[
+    {type:'scatter',mode:'lines',name:'Clear-sky GHI',x:MONTHS,y:mg('clr'),line:{color:'#2A5A2A',width:1.5,dash:'dot'},showlegend:true},
+    {type:'scatter',mode:'lines',name:'GHI (all-sky)',x:MONTHS,y:mg('ghi'),line:{color:GM,width:2},showlegend:true},
+    {type:'scatter',mode:'lines',name:'POA (tilted)', x:MONTHS,y:mg('poa'),line:{color:'#FBBF24',width:2},showlegend:true},
+  ],tLayout('Monthly Mean Irradiance — GHI / POA','W/m²',{
+    showlegend:true,legend:{orientation:'h',y:-0.22,font:{color:GM,size:9}},
+  }),PC);
+}
+
+function chartCloud(res) {
+  const day = res.filter(r=>r.cld!==null);
+  const y = Array.from({length:12},(_,i)=>{
+    const r=day.filter(r=>r.month===i+1);
+    return r.length?+(r.reduce((s,x)=>s+x.cld,0)/r.length).toFixed(1):0;
+  });
+  Plotly.newPlot('cCloud',[{type:'bar',x:MONTHS,y,marker:{color:GM},
+    text:y.map(v=>v.toFixed(0)+'%'),textposition:'outside',textfont:{color:GM,size:9}}],
+    tLayout('Monthly Average Cloud Shading (%)','Cloud Shading (%)'),PC);
+}
+
+function chartCF(res, m) {
+  const yrs = [...new Set(res.map(r=>r.year))].sort();
+  const y = yrs.map(yr=>{
+    const r=res.filter(r=>r.year===yr);
+    return +(r.reduce((s,x)=>s+x.pac,0)/(m.inv*8760)*100).toFixed(1);
+  });
+  Plotly.newPlot('cCF',[{type:'bar',x:yrs.map(String),y,marker:{color:GT},
+    text:y.map(v=>v+'%'),textposition:'outside',textfont:{color:GM,size:9}}],
+    tLayout('Annual AC Capacity Factor by Year (%)','Capacity Factor (%)',{
+      yaxis:{...AX,title:'Capacity Factor (%)',range:[0,Math.max(...y)*1.25]},
+    }),PC);
+}
+
+function renderTable(res, m) {
+  const yrs = [...new Set(res.map(r=>r.year))].sort();
+  const rows = yrs.map(yr=>{
+    const r=res.filter(r=>r.year===yr);
+    const ghi=+(r.reduce((s,x)=>s+x.ghi,0)/1000).toFixed(0);
+    const poa=+(r.reduce((s,x)=>s+x.poa,0)/1000).toFixed(0);
+    const ac =+(r.reduce((s,x)=>s+x.pac,0)/1000).toFixed(1);
+    const sy =+(r.reduce((s,x)=>s+x.pac,0)/m.cap).toFixed(0);
+    const cf =+(r.reduce((s,x)=>s+x.pac,0)/(m.inv*8760)*100).toFixed(1);
+    const d  =r.filter(x=>x.cld!==null);
+    const cl =d.length?+(d.reduce((s,x)=>s+x.cld,0)/d.length).toFixed(1)+'%':'--';
+    return `<tr><td>${yr}</td><td>${ghi}</td><td>${poa}</td><td>${ac}</td><td>${sy}</td><td>${cf}%</td><td>${cl}</td></tr>`;
+  });
+  document.getElementById('tbl').innerHTML =
+    '<thead><tr><th>Year</th><th>GHI (kWh/m²)</th><th>POA (kWh/m²)</th><th>AC Energy (MWh)</th><th>Spec. Yield (kWh/kWp)</th><th>Cap. Factor</th><th>Cloud Shading</th></tr></thead>'
+    +'<tbody>'+rows.join('')+'</tbody>';
+}
+
+// ── CSV download ──────────────────────────────────────────────────────────────
+function dlCSV() {
+  const m = META;
+  const hdr = [
+    '# Solar PV Time Series - NASA POWER (HTML standalone)',
+    `# Site: (${(+m.lat).toFixed(4)}, ${(+m.lon).toFixed(4)})`,
+    `# Period: ${m.sy}-${m.ey} (${m.ny} yr)  Resolution: hourly LST`,
+    `# System: ${m.cap} kWp  Tilt: ${m.tilt} deg  Az: ${m.az} deg  DC:AC: ${(+m.dcac).toFixed(2)}`,
+    `# Temp coeff: ${m.tc} pct/degC  System losses: ${m.sl} pct`,
+    `# AEY: ${(m.aac/1000).toFixed(1)} MWh/yr  SY: ${m.sy_.toFixed(0)} kWh/kWp/yr  CF: ${m.cf.toFixed(1)}%  PR: ${m.pr.toFixed(1)}%  Cloud: ${m.cm.toFixed(1)}%`,
+    '#',
+    'datetime_lst,ghi_wm2,ghi_clear_wm2,cloud_shading_pct,dni_wm2,dhi_wm2,poa_wm2,temp_air_c,temp_cell_c,wind_speed_ms,dc_power_kw,ac_power_kw',
+  ].join('\n');
+  const body = RES.map(r=>{
+    const dt=`${r.year}-${String(r.month).padStart(2,'0')}-${String(r.day).padStart(2,'0')} ${String(r.hour).padStart(2,'0')}:00`;
+    return `${dt},${r.ghi.toFixed(1)},${r.clr.toFixed(1)},${r.cld!=null?r.cld.toFixed(1):''},${r.dni.toFixed(1)},${r.dhi.toFixed(1)},${r.poa.toFixed(1)},${r.ta.toFixed(1)},${r.tcell.toFixed(2)},${r.ws.toFixed(1)},${r.pdc.toFixed(3)},${r.pac.toFixed(3)}`;
+  }).join('\n');
+  const blob = new Blob([hdr+'\n'+body],{type:'text/csv;charset=utf-8;'});
+  const a = Object.assign(document.createElement('a'),{href:URL.createObjectURL(blob),download:`solar_ts_${m.sy}_${m.ey}_${(+m.lat).toFixed(3)}_${(+m.lon).toFixed(3)}.csv`});
+  a.click();
+}
+</script>
+</body>
+</html>
