@@ -11,4 +11,4 @@ openpyxl>=3.1
 matplotlib>=3.9
 folium>=0.17
 streamlit-folium>=0.21
-git+https://github.com/jonk510/wind-tools-shared.git
+git+https://github.com/jonk510/wind-tools-shared.git@a2cb22f
